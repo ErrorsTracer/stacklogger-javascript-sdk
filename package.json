@@ -1,6 +1,6 @@
 {
     "name": "stacklogger",
-    "private": true,
+    "private": false,
     "packageManager": "pnpm@9.15.0",
     "scripts": {
         "build": "pnpm -r build",
