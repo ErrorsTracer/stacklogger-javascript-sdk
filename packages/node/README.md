@@ -5,7 +5,7 @@ Capture and ingest errors from Node.js applications with StackLogger.
 ## 1. Install the package
 
 ```bash
-npm add @stacklogger/node
+npm install @stacklogger/node
 ```
 
 ## 2. Configure the API key

@@ -1,21 +1,11 @@
 export type StackLoggerLevel =
-  | "trace"
-  | "debug"
-  | "info"
-  | "warn"
-  | "error"
-  | "fatal";
+  | "trace" | "debug" | "info" | "warn" | "error" | "fatal" | "warning" | "critical";
 export type StackLoggerEventType = "log" | "exception";
 export const DEFAULT_ENDPOINT =
   "https://ingest.stacklogger.io/v0.1/errors/ingest";
-const levels: StackLoggerLevel[] = [
-  "trace",
-  "debug",
-  "info",
-  "warn",
-  "error",
-  "fatal",
-];
+const levels: StackLoggerLevel[] = ["trace", "debug", "info", "warn", "warning", "error", "fatal", "critical"];
+const ingestLevels = new Set(["debug", "info", "warning", "error", "fatal", "critical"]);
+export type StackLoggerRuntime = "browser" | "server" | "mobile" | "desktop" | "worker" | "unknown";
 export interface StackLoggerException {
   name: string;
   message: string;
@@ -51,26 +41,29 @@ export interface StackLoggerPlatformContext {
   sdk: { name: string; version: string };
 }
 export interface StackLoggerEvent {
-  eventId: string;
-  timestamp: string;
-  type: StackLoggerEventType;
-  level: StackLoggerLevel;
-  message: string;
-  exception?: StackLoggerException;
+  projectId?: string;
   environment?: string;
-  release?: string;
-  fingerprint?: string[];
+  framework?: string;
+  language?: string;
+  runtime?: StackLoggerRuntime;
+  level?: Exclude<StackLoggerLevel, "trace" | "warn">;
+  message?: string;
+  error?: string;
+  name?: string;
+  stack?: string;
+  fingerprint?: string;
   handled?: boolean;
-  platform?: StackLoggerPlatformContext;
+  timestamp?: string;
+  serverName?: string;
+  release?: string;
   url?: string;
   transaction?: string;
-  user?: StackLoggerUser;
-  request?: StackLoggerRequestContext;
-  tags?: Record<string, string | number | boolean>;
+  user?: Record<string, unknown>;
+  request?: Record<string, unknown>;
+  tags?: Record<string, unknown>;
   extra?: Record<string, unknown>;
-  breadcrumbs?: StackLoggerBreadcrumb[];
-  contexts?: Record<string, Record<string, unknown>>;
-  additionalData?: unknown;
+  breadcrumbs?: Record<string, unknown>[];
+  contexts?: Record<string, unknown>;
 }
 export interface CaptureOptions {
   tags?: Record<string, string | number | boolean>;
@@ -120,6 +113,7 @@ export interface StackLoggerTransport {
 }
 export interface StackLoggerConfig {
   apiKey: string;
+  projectId?: string;
   endpoint?: string;
   environment?: string;
   release?: string;
@@ -136,6 +130,10 @@ export interface StackLoggerConfig {
   timeoutMs?: number;
   debug?: boolean;
   platform?: Partial<StackLoggerPlatformContext>;
+  runtime?: StackLoggerRuntime;
+  framework?: string;
+  language?: string;
+  serverName?: string;
 }
 const defaults: CaptureConfig = {
   stack: true,
@@ -323,26 +321,25 @@ class ClientImpl {
       (level === "error" || level === "fatal" ? 1 : 1);
     if (Math.random() > rate) return;
     const now = Date.now(),
-      fp = o.fingerprint ?? (ex ? fingerprint(ex) : [level, message]);
-    if (ex && now - (this.last.get(fp.join("|")) ?? 0) < 1000) return;
-    this.last.set(fp.join("|"), now);
+      fp = o.fingerprint?.join("|") ?? (ex ? fingerprint(ex).join("|") : `${level}|${message}`);
+    if (ex && now - (this.last.get(fp) ?? 0) < 1000) return;
+    this.last.set(fp, now);
     let e: StackLoggerEvent = {
-      eventId: id(),
+      projectId: this.cfg.projectId,
       timestamp: new Date().toISOString(),
-      type: ex ? "exception" : "log",
-      level,
-      message,
-      exception: ex,
+      level: (ingestLevels.has(level) ? level : level === "warn" ? "warning" : "debug") as Exclude<StackLoggerLevel, "trace" | "warn">,
+      message: message || undefined,
+      error: ex?.message || undefined,
+      name: ex?.name,
+      stack: ex?.stack,
       fingerprint: fp,
       handled: o.handled ?? !!ex,
       environment: this.cfg.environment,
+      framework: this.cfg.framework ?? this.cfg.platform?.framework,
+      language: this.cfg.language ?? this.cfg.platform?.language ?? "javascript",
+      runtime: this.cfg.runtime ?? ((this.cfg.platform?.runtime as StackLoggerRuntime | undefined) ?? "unknown"),
       release: this.cfg.release,
-      platform: {
-        language: "javascript",
-        runtime: "unknown",
-        sdk: { name: "@stacklogger/core", version: "0.1.0" },
-        ...this.cfg.platform,
-      },
+      serverName: this.cfg.serverName,
       user: this.cfg.capture?.user ? this.user : undefined,
       tags: this.cfg.capture?.tags ? { ...this.tags, ...o.tags } : undefined,
       extra: this.cfg.capture?.extra
@@ -352,16 +349,16 @@ class ClientImpl {
         ? { ...this.contexts, ...o.contexts }
         : undefined,
       breadcrumbs: this.cfg.capture?.breadcrumbs
-        ? this.crumbs.slice()
+        ? this.crumbs.map((b) => ({ ...b }))
         : undefined,
-      request: this.cfg.capture?.request ? o.request : undefined,
+      request: this.cfg.capture?.request && o.request ? { ...o.request } : undefined,
     };
     try {
       e = sanitize(e, this.cfg.limits);
       e = this.cfg.beforeSend?.(e) ?? e;
       if (e) void this.transport.send([e]);
     } catch {}
-    return e?.eventId;
+    return e ? fp : undefined;
   }
   log(l: StackLoggerLevel, m: string, o?: CaptureOptions) {
     this.addBreadcrumb({ message: m, level: l });
