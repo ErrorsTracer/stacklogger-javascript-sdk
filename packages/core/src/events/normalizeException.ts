@@ -1,3 +1,26 @@
 import { sanitize } from "../privacy/sanitize.js";
 import type { StackLoggerException } from "./types.js";
-export function normalizeException(value: unknown, includeStack = true): StackLoggerException { if (value instanceof Error) return { name: value.name || "Error", message: value.message || String(value), ...(includeStack && value.stack ? { stack: value.stack } : {}), ...(value.cause !== undefined ? { cause: sanitize(value.cause) } : {}) }; if (typeof value === "string") return { name: "Error", message: value }; try { return { name: "ThrownValue", message: typeof value === "object" ? JSON.stringify(sanitize(value)) : String(value) }; } catch { return { name: "ThrownValue", message: "Unserializable thrown value" }; } }
+export function normalizeException(
+  value: unknown,
+  includeStack = true,
+): StackLoggerException {
+  if (value instanceof Error)
+    return {
+      name: value.name || "Error",
+      message: value.message || String(value),
+      ...(includeStack && value.stack ? { stack: value.stack } : {}),
+      ...(value.cause !== undefined ? { cause: sanitize(value.cause) } : {}),
+    };
+  if (typeof value === "string") return { name: "Error", message: value };
+  try {
+    return {
+      name: "ThrownValue",
+      message:
+        typeof value === "object"
+          ? JSON.stringify(sanitize(value))
+          : String(value),
+    };
+  } catch {
+    return { name: "ThrownValue", message: "Unserializable thrown value" };
+  }
+}

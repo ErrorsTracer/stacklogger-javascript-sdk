@@ -1,5 +1,46 @@
-import type { EventContext, StackLoggerEvent, StackLoggerLevel, StackLoggerPlatformContext } from "../events/types.js";
-export interface StackLoggerCaptureConfig { stack?: boolean; page?: boolean; user?: boolean; tags?: boolean; contexts?: boolean; extra?: boolean; breadcrumbs?: boolean; request?: Record<string, boolean>; console?: Record<string, boolean> }
-export interface StackLoggerLimits { maxBreadcrumbs: number; maxStringLength: number; maxObjectDepth: number; maxArrayLength: number; maxEventBytes: number }
-export interface StackLoggerTransport { send(events: StackLoggerEvent[]): Promise<void>; flush(): Promise<void> }
-export interface StackLoggerConfig { apiKey: string; endpoint?: string; environment?: string; release?: string; minLevel?: StackLoggerLevel; capture?: StackLoggerCaptureConfig; sampleRates?: Partial<Record<StackLoggerLevel, number>>; limits?: Partial<StackLoggerLimits>; beforeSend?: (event: StackLoggerEvent) => StackLoggerEvent | null; transport?: StackLoggerTransport; batchSize?: number; flushIntervalMs?: number; maxRetries?: number; timeoutMs?: number; debug?: boolean; platform?: Partial<StackLoggerPlatformContext> }
+import type {
+  EventContext,
+  StackLoggerEvent,
+  StackLoggerLevel,
+  StackLoggerPlatformContext,
+} from "../events/types.js";
+export interface StackLoggerCaptureConfig {
+  stack?: boolean;
+  page?: boolean;
+  user?: boolean;
+  tags?: boolean;
+  contexts?: boolean;
+  extra?: boolean;
+  breadcrumbs?: boolean;
+  request?: Record<string, boolean>;
+  console?: Record<string, boolean>;
+}
+export interface StackLoggerLimits {
+  maxBreadcrumbs: number;
+  maxStringLength: number;
+  maxObjectDepth: number;
+  maxArrayLength: number;
+  maxEventBytes: number;
+}
+export interface StackLoggerTransport {
+  send(events: StackLoggerEvent[]): Promise<void>;
+  flush(): Promise<void>;
+}
+export interface StackLoggerConfig {
+  apiKey: string;
+  endpoint?: string;
+  environment?: string;
+  release?: string;
+  minLevel?: StackLoggerLevel;
+  capture?: StackLoggerCaptureConfig;
+  sampleRates?: Partial<Record<StackLoggerLevel, number>>;
+  limits?: Partial<StackLoggerLimits>;
+  beforeSend?: (event: StackLoggerEvent) => StackLoggerEvent | null;
+  transport?: StackLoggerTransport;
+  batchSize?: number;
+  flushIntervalMs?: number;
+  maxRetries?: number;
+  timeoutMs?: number;
+  debug?: boolean;
+  platform?: Partial<StackLoggerPlatformContext>;
+}

@@ -1,28 +1,452 @@
-export type StackLoggerLevel="trace"|"debug"|"info"|"warn"|"error"|"fatal";
-export type StackLoggerEventType="log"|"exception";
-export const DEFAULT_ENDPOINT="https://ingest.stacklogger.io/v0.1/errors/ingest";
-const levels:StackLoggerLevel[]=["trace","debug","info","warn","error","fatal"];
-export interface StackLoggerException{name:string;message:string;stack?:string;cause?:unknown}
-export interface StackLoggerUser{[key:string]:unknown;id?:string;email?:string;username?:string}
-export interface StackLoggerBreadcrumb{category?:string;message:string;level?:StackLoggerLevel;timestamp:string;data?:Record<string,unknown>}
-export interface StackLoggerRequestContext{method?:string;url?:string;statusCode?:number;durationMs?:number;traceId?:string;spanId?:string}
-export interface StackLoggerPlatformContext{language:string;runtime:string;framework?:string;frameworkVersion?:string;sdk:{name:string;version:string}}
-export interface StackLoggerEvent{eventId:string;timestamp:string;type:StackLoggerEventType;level:StackLoggerLevel;message:string;exception?:StackLoggerException;environment?:string;release?:string;fingerprint?:string[];handled?:boolean;platform?:StackLoggerPlatformContext;url?:string;transaction?:string;user?:StackLoggerUser;request?:StackLoggerRequestContext;tags?:Record<string,string|number|boolean>;extra?:Record<string,unknown>;breadcrumbs?:StackLoggerBreadcrumb[];contexts?:Record<string,Record<string,unknown>>;additionalData?:unknown}
-export interface CaptureOptions{tags?:Record<string,string|number|boolean>;extra?:Record<string,unknown>;contexts?:Record<string,Record<string,unknown>>;fingerprint?:string[];handled?:boolean;request?:StackLoggerRequestContext}
-export interface CaptureConfig{stack:boolean;page:boolean;user:boolean;tags:boolean;contexts:boolean;extra:boolean;breadcrumbs:boolean;request:{method:boolean;url:boolean;statusCode:boolean;duration:boolean;traceId:boolean;queryString:boolean;headers:boolean;body:boolean;responseBody:boolean};console:{error:boolean;warn:boolean;info:boolean;debug:boolean;log:boolean}}
-export interface Limits{maxBreadcrumbs:number;maxStringLength:number;maxObjectDepth:number;maxArrayLength:number;maxEventBytes:number}
-export interface StackLoggerTransport{send(events:StackLoggerEvent[]):Promise<void>;flush():Promise<void>}
-export interface StackLoggerConfig{apiKey:string;endpoint?:string;environment?:string;release?:string;minLevel?:StackLoggerLevel;sampleRates?:Partial<Record<StackLoggerLevel,number>>;capture?:Partial<CaptureConfig>;limits?:Partial<Limits>;redactKeys?:string[];beforeSend?:(event:StackLoggerEvent)=>StackLoggerEvent|null;transport?:StackLoggerTransport;batchSize?:number;flushIntervalMs?:number;maxRetries?:number;timeoutMs?:number;debug?:boolean;platform?:Partial<StackLoggerPlatformContext>}
-const defaults:CaptureConfig={stack:true,page:true,user:false,tags:true,contexts:true,extra:true,breadcrumbs:true,request:{method:true,url:true,statusCode:true,duration:true,traceId:true,queryString:false,headers:false,body:false,responseBody:false},console:{error:true,warn:true,info:false,debug:false,log:false}};
-const lim:Limits={maxBreadcrumbs:50,maxStringLength:10000,maxObjectDepth:8,maxArrayLength:100,maxEventBytes:200000};
-const sensitive=/password|passwd|secret|token|apikey|authorization|cookie|creditcard|cardnumber|cvv|ssn/i;
-function safe(v:unknown,d=0,c:CaptureConfig=defaults,l:Limits=lim,seen=new WeakSet<object>()):unknown{if(v===undefined||typeof v==='function'||typeof v==='symbol')return undefined;if(typeof v==='bigint')return String(v);if(typeof v==='string')return v.slice(0,l.maxStringLength);if(v===null||typeof v!=='object')return v;if(d>=l.maxObjectDepth)return "[MaxDepth]";if(seen.has(v))return "[Circular]";seen.add(v);if(v instanceof Error)return {name:v.name,message:v.message,stack:v.stack};if(Array.isArray(v))return v.slice(0,l.maxArrayLength).map(x=>safe(x,d+1,c,l,seen));const out:Record<string,unknown>={};for(const k of Object.keys(v)){if(sensitive.test(k))out[k]="[REDACTED]";else{try{const x=safe((v as Record<string,unknown>)[k],d+1,c,l,seen);if(x!==undefined)out[k]=x}catch{out[k]="[Unreadable]"}}}return out}
-export function sanitize<T>(value:T,limits:Partial<Limits>={}):T{return safe(value,0,defaults,{...lim,...limits}) as T}
-export function normalizeException(value:unknown,includeStack=true):StackLoggerException{if(value instanceof Error)return {name:value.name||"Error",message:value.message||String(value),...(includeStack&&value.stack?{stack:value.stack}:{}),...(value.cause!==undefined?{cause:sanitize(value.cause)}:{})};if(typeof value==='string')return {name:"Error",message:value};try{return {name:"ThrownValue",message:typeof value==='object'?JSON.stringify(sanitize(value)):String(value)}}catch{return {name:"ThrownValue",message:"Unserializable thrown value"}}}
-function id(){return globalThis.crypto?.randomUUID?.()??`${Date.now()}-${Math.random().toString(36).slice(2)}`}
-function fingerprint(e:StackLoggerException){return [e.name,e.message.replace(/\d+/g,"#").slice(0,200),e.stack?.split("\n").slice(1,3).join("|")??""]}
-class DefaultTransport implements StackLoggerTransport{q:StackLoggerEvent[]=[];timer?:ReturnType<typeof setInterval>;constructor(private cfg:StackLoggerConfig,private endpoint:string){this.timer=setInterval(()=>void this.flush(),cfg.flushIntervalMs??2000)}async send(es:StackLoggerEvent[]){this.q.push(...es);if(this.q.length>=(this.cfg.batchSize??10))await this.flush()}async flush(){if(!this.q.length)return;const batch=this.q.splice(0,this.cfg.batchSize??10);for(let i=0;i<=(this.cfg.maxRetries??2);i++){try{const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),this.cfg.timeoutMs??10000);const r=await fetch(this.endpoint,{method:"POST",headers:{"content-type":"application/json","x-stacklogger-api-key":this.cfg.apiKey},body:JSON.stringify(batch),signal:ctrl.signal});clearTimeout(t);if(r.ok||r.status>=400&&r.status<500)return;if(i===(this.cfg.maxRetries??2))return}catch{if(i===(this.cfg.maxRetries??2))return;await new Promise(x=>setTimeout(x,100*Math.pow(2,i)))}}}}
-class ClientImpl{cfg!:StackLoggerConfig;transport!:StackLoggerTransport;crumbs:StackLoggerBreadcrumb[]=[];user?:StackLoggerUser;tags:Record<string,string|number|boolean>={};contexts:Record<string,Record<string,unknown>>={};last=new Map<string,number>();init(c:StackLoggerConfig){if(this.transport?.flush)void this.transport.flush();this.cfg={...c,capture:{...defaults,...c.capture,request:{...defaults.request,...c.capture?.request},console:{...defaults.console,...c.capture?.console}},limits:{...lim,...c.limits}};for(const [k,v] of Object.entries(c.sampleRates??{}))if(v<0||v>1)throw new RangeError(`sample rate ${k} must be between 0 and 1`);this.transport=c.transport??new DefaultTransport(this.cfg,c.endpoint??DEFAULT_ENDPOINT)}private emit(level:StackLoggerLevel,message:string,o:CaptureOptions={},ex?:StackLoggerException){if(!this.cfg)return;const threshold=levels.indexOf(this.cfg.minLevel??"trace");if(levels.indexOf(level)<threshold)return;const rate=this.cfg.sampleRates?.[level]??(level==="error"||level==="fatal"?1:1);if(Math.random()>rate)return;const now=Date.now(),fp=o.fingerprint??(ex?fingerprint(ex):[level,message]);if(ex&&now-(this.last.get(fp.join("|"))??0)<1000)return;this.last.set(fp.join("|"),now);let e:StackLoggerEvent={eventId:id(),timestamp:new Date().toISOString(),type:ex?"exception":"log",level,message,exception:ex,fingerprint:fp,handled:o.handled??!!ex,environment:this.cfg.environment,release:this.cfg.release,platform:{language:"javascript",runtime:"unknown",sdk:{name:"@stacklogger/core",version:"0.1.0"},...this.cfg.platform},user:this.cfg.capture?.user?this.user:undefined,tags:this.cfg.capture?.tags?{...this.tags,...o.tags}:undefined,extra:this.cfg.capture?.extra?sanitize(o.extra??{},this.cfg.limits):undefined,contexts:this.cfg.capture?.contexts?{...this.contexts,...o.contexts}:undefined,breadcrumbs:this.cfg.capture?.breadcrumbs?this.crumbs.slice():undefined,request:this.cfg.capture?.request?o.request:undefined};try{e=sanitize(e,this.cfg.limits);e=this.cfg.beforeSend?.(e)??e;if(e)void this.transport.send([e])}catch{}return e?.eventId}log(l:StackLoggerLevel,m:string,o?:CaptureOptions){this.addBreadcrumb({message:m,level:l});return this.emit(l,m,o)}captureException(v:unknown,o:CaptureOptions={}){const x=normalizeException(v,this.cfg.capture?.stack!==false);return this.emit("error",x.message,o,x)}captureMessage(m:string,l:StackLoggerLevel="info",o?:CaptureOptions){return this.emit(l,m,o)}addBreadcrumb(b:Omit<StackLoggerBreadcrumb,"timestamp">&{timestamp?:string}){this.crumbs.push({...b,timestamp:b.timestamp??new Date().toISOString()});const n=this.cfg?.limits?.maxBreadcrumbs??50;if(this.crumbs.length>n)this.crumbs.splice(0,this.crumbs.length-n)}flush(){return this.transport?.flush()??Promise.resolve()}setUser(u:StackLoggerUser|null){this.user=u??undefined}setTag(k:string,v:string|number|boolean){this.tags[k]=v}setTags(v:Record<string,string|number|boolean>){Object.assign(this.tags,v)}removeTag(k:string){delete this.tags[k]}setContext(k:string,v:Record<string,unknown>){this.contexts[k]=v}removeContext(k:string){delete this.contexts[k]}clearBreadcrumbs(){this.crumbs=[]}}
-export const StackLogger:Client=new ClientImpl() as unknown as Client;
-for(const l of levels)Object.defineProperty(StackLogger,l,{value:(m:string,o?:CaptureOptions)=>StackLogger.log(l,m,o)});
-export interface Client { init(config:StackLoggerConfig):void; log(level:StackLoggerLevel,message:string,options?:CaptureOptions):string|undefined; captureException(value:unknown,options?:CaptureOptions):string|undefined; captureMessage(message:string,level?:StackLoggerLevel,options?:CaptureOptions):string|undefined; addBreadcrumb(breadcrumb:Omit<StackLoggerBreadcrumb,"timestamp">&{timestamp?:string}):void; flush():Promise<void>; setUser(user:StackLoggerUser|null):void; setTag(key:string,value:string|number|boolean):void; setTags(values:Record<string,string|number|boolean>):void; removeTag(key:string):void; setContext(key:string,value:Record<string,unknown>):void; removeContext(key:string):void; clearBreadcrumbs():void; trace(message:string, options?:CaptureOptions):string|undefined; debug(message:string, options?:CaptureOptions):string|undefined; info(message:string, options?:CaptureOptions):string|undefined; warn(message:string, options?:CaptureOptions):string|undefined; error(message:string, options?:CaptureOptions):string|undefined; fatal(message:string, options?:CaptureOptions):string|undefined }
+export type StackLoggerLevel =
+  | "trace"
+  | "debug"
+  | "info"
+  | "warn"
+  | "error"
+  | "fatal";
+export type StackLoggerEventType = "log" | "exception";
+export const DEFAULT_ENDPOINT =
+  "https://ingest.stacklogger.io/v0.1/errors/ingest";
+const levels: StackLoggerLevel[] = [
+  "trace",
+  "debug",
+  "info",
+  "warn",
+  "error",
+  "fatal",
+];
+export interface StackLoggerException {
+  name: string;
+  message: string;
+  stack?: string;
+  cause?: unknown;
+}
+export interface StackLoggerUser {
+  [key: string]: unknown;
+  id?: string;
+  email?: string;
+  username?: string;
+}
+export interface StackLoggerBreadcrumb {
+  category?: string;
+  message: string;
+  level?: StackLoggerLevel;
+  timestamp: string;
+  data?: Record<string, unknown>;
+}
+export interface StackLoggerRequestContext {
+  method?: string;
+  url?: string;
+  statusCode?: number;
+  durationMs?: number;
+  traceId?: string;
+  spanId?: string;
+}
+export interface StackLoggerPlatformContext {
+  language: string;
+  runtime: string;
+  framework?: string;
+  frameworkVersion?: string;
+  sdk: { name: string; version: string };
+}
+export interface StackLoggerEvent {
+  eventId: string;
+  timestamp: string;
+  type: StackLoggerEventType;
+  level: StackLoggerLevel;
+  message: string;
+  exception?: StackLoggerException;
+  environment?: string;
+  release?: string;
+  fingerprint?: string[];
+  handled?: boolean;
+  platform?: StackLoggerPlatformContext;
+  url?: string;
+  transaction?: string;
+  user?: StackLoggerUser;
+  request?: StackLoggerRequestContext;
+  tags?: Record<string, string | number | boolean>;
+  extra?: Record<string, unknown>;
+  breadcrumbs?: StackLoggerBreadcrumb[];
+  contexts?: Record<string, Record<string, unknown>>;
+  additionalData?: unknown;
+}
+export interface CaptureOptions {
+  tags?: Record<string, string | number | boolean>;
+  extra?: Record<string, unknown>;
+  contexts?: Record<string, Record<string, unknown>>;
+  fingerprint?: string[];
+  handled?: boolean;
+  request?: StackLoggerRequestContext;
+}
+export interface CaptureConfig {
+  stack: boolean;
+  page: boolean;
+  user: boolean;
+  tags: boolean;
+  contexts: boolean;
+  extra: boolean;
+  breadcrumbs: boolean;
+  request: {
+    method: boolean;
+    url: boolean;
+    statusCode: boolean;
+    duration: boolean;
+    traceId: boolean;
+    queryString: boolean;
+    headers: boolean;
+    body: boolean;
+    responseBody: boolean;
+  };
+  console: {
+    error: boolean;
+    warn: boolean;
+    info: boolean;
+    debug: boolean;
+    log: boolean;
+  };
+}
+export interface Limits {
+  maxBreadcrumbs: number;
+  maxStringLength: number;
+  maxObjectDepth: number;
+  maxArrayLength: number;
+  maxEventBytes: number;
+}
+export interface StackLoggerTransport {
+  send(events: StackLoggerEvent[]): Promise<void>;
+  flush(): Promise<void>;
+}
+export interface StackLoggerConfig {
+  apiKey: string;
+  endpoint?: string;
+  environment?: string;
+  release?: string;
+  minLevel?: StackLoggerLevel;
+  sampleRates?: Partial<Record<StackLoggerLevel, number>>;
+  capture?: Partial<CaptureConfig>;
+  limits?: Partial<Limits>;
+  redactKeys?: string[];
+  beforeSend?: (event: StackLoggerEvent) => StackLoggerEvent | null;
+  transport?: StackLoggerTransport;
+  batchSize?: number;
+  flushIntervalMs?: number;
+  maxRetries?: number;
+  timeoutMs?: number;
+  debug?: boolean;
+  platform?: Partial<StackLoggerPlatformContext>;
+}
+const defaults: CaptureConfig = {
+  stack: true,
+  page: true,
+  user: false,
+  tags: true,
+  contexts: true,
+  extra: true,
+  breadcrumbs: true,
+  request: {
+    method: true,
+    url: true,
+    statusCode: true,
+    duration: true,
+    traceId: true,
+    queryString: false,
+    headers: false,
+    body: false,
+    responseBody: false,
+  },
+  console: { error: true, warn: true, info: false, debug: false, log: false },
+};
+const lim: Limits = {
+  maxBreadcrumbs: 50,
+  maxStringLength: 10000,
+  maxObjectDepth: 8,
+  maxArrayLength: 100,
+  maxEventBytes: 200000,
+};
+const sensitive =
+  /password|passwd|secret|token|apikey|authorization|cookie|creditcard|cardnumber|cvv|ssn/i;
+function safe(
+  v: unknown,
+  d = 0,
+  c: CaptureConfig = defaults,
+  l: Limits = lim,
+  seen = new WeakSet<object>(),
+): unknown {
+  if (v === undefined || typeof v === "function" || typeof v === "symbol")
+    return undefined;
+  if (typeof v === "bigint") return String(v);
+  if (typeof v === "string") return v.slice(0, l.maxStringLength);
+  if (v === null || typeof v !== "object") return v;
+  if (d >= l.maxObjectDepth) return "[MaxDepth]";
+  if (seen.has(v)) return "[Circular]";
+  seen.add(v);
+  if (v instanceof Error)
+    return { name: v.name, message: v.message, stack: v.stack };
+  if (Array.isArray(v))
+    return v.slice(0, l.maxArrayLength).map((x) => safe(x, d + 1, c, l, seen));
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(v)) {
+    if (sensitive.test(k)) out[k] = "[REDACTED]";
+    else {
+      try {
+        const x = safe((v as Record<string, unknown>)[k], d + 1, c, l, seen);
+        if (x !== undefined) out[k] = x;
+      } catch {
+        out[k] = "[Unreadable]";
+      }
+    }
+  }
+  return out;
+}
+export function sanitize<T>(value: T, limits: Partial<Limits> = {}): T {
+  return safe(value, 0, defaults, { ...lim, ...limits }) as T;
+}
+export function normalizeException(
+  value: unknown,
+  includeStack = true,
+): StackLoggerException {
+  if (value instanceof Error)
+    return {
+      name: value.name || "Error",
+      message: value.message || String(value),
+      ...(includeStack && value.stack ? { stack: value.stack } : {}),
+      ...(value.cause !== undefined ? { cause: sanitize(value.cause) } : {}),
+    };
+  if (typeof value === "string") return { name: "Error", message: value };
+  try {
+    return {
+      name: "ThrownValue",
+      message:
+        typeof value === "object"
+          ? JSON.stringify(sanitize(value))
+          : String(value),
+    };
+  } catch {
+    return { name: "ThrownValue", message: "Unserializable thrown value" };
+  }
+}
+function id() {
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+}
+function fingerprint(e: StackLoggerException) {
+  return [
+    e.name,
+    e.message.replace(/\d+/g, "#").slice(0, 200),
+    e.stack?.split("\n").slice(1, 3).join("|") ?? "",
+  ];
+}
+class DefaultTransport implements StackLoggerTransport {
+  q: StackLoggerEvent[] = [];
+  timer?: ReturnType<typeof setInterval>;
+  constructor(
+    private cfg: StackLoggerConfig,
+    private endpoint: string,
+  ) {
+    this.timer = setInterval(
+      () => void this.flush(),
+      cfg.flushIntervalMs ?? 2000,
+    );
+  }
+  async send(es: StackLoggerEvent[]) {
+    this.q.push(...es);
+    if (this.q.length >= (this.cfg.batchSize ?? 10)) await this.flush();
+  }
+  async flush() {
+    if (!this.q.length) return;
+    const batch = this.q.splice(0, this.cfg.batchSize ?? 10);
+    for (let i = 0; i <= (this.cfg.maxRetries ?? 2); i++) {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), this.cfg.timeoutMs ?? 10000);
+        const r = await fetch(this.endpoint, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-stacklogger-api-key": this.cfg.apiKey,
+          },
+          body: JSON.stringify(batch),
+          signal: ctrl.signal,
+        });
+        clearTimeout(t);
+        if (r.ok || (r.status >= 400 && r.status < 500)) return;
+        if (i === (this.cfg.maxRetries ?? 2)) return;
+      } catch {
+        if (i === (this.cfg.maxRetries ?? 2)) return;
+        await new Promise((x) => setTimeout(x, 100 * Math.pow(2, i)));
+      }
+    }
+  }
+}
+class ClientImpl {
+  cfg!: StackLoggerConfig;
+  transport!: StackLoggerTransport;
+  crumbs: StackLoggerBreadcrumb[] = [];
+  user?: StackLoggerUser;
+  tags: Record<string, string | number | boolean> = {};
+  contexts: Record<string, Record<string, unknown>> = {};
+  last = new Map<string, number>();
+  init(c: StackLoggerConfig) {
+    if (this.transport?.flush) void this.transport.flush();
+    this.cfg = {
+      ...c,
+      capture: {
+        ...defaults,
+        ...c.capture,
+        request: { ...defaults.request, ...c.capture?.request },
+        console: { ...defaults.console, ...c.capture?.console },
+      },
+      limits: { ...lim, ...c.limits },
+    };
+    for (const [k, v] of Object.entries(c.sampleRates ?? {}))
+      if (v < 0 || v > 1)
+        throw new RangeError(`sample rate ${k} must be between 0 and 1`);
+    this.transport =
+      c.transport ??
+      new DefaultTransport(this.cfg, c.endpoint ?? DEFAULT_ENDPOINT);
+  }
+  private emit(
+    level: StackLoggerLevel,
+    message: string,
+    o: CaptureOptions = {},
+    ex?: StackLoggerException,
+  ) {
+    if (!this.cfg) return;
+    const threshold = levels.indexOf(this.cfg.minLevel ?? "trace");
+    if (levels.indexOf(level) < threshold) return;
+    const rate =
+      this.cfg.sampleRates?.[level] ??
+      (level === "error" || level === "fatal" ? 1 : 1);
+    if (Math.random() > rate) return;
+    const now = Date.now(),
+      fp = o.fingerprint ?? (ex ? fingerprint(ex) : [level, message]);
+    if (ex && now - (this.last.get(fp.join("|")) ?? 0) < 1000) return;
+    this.last.set(fp.join("|"), now);
+    let e: StackLoggerEvent = {
+      eventId: id(),
+      timestamp: new Date().toISOString(),
+      type: ex ? "exception" : "log",
+      level,
+      message,
+      exception: ex,
+      fingerprint: fp,
+      handled: o.handled ?? !!ex,
+      environment: this.cfg.environment,
+      release: this.cfg.release,
+      platform: {
+        language: "javascript",
+        runtime: "unknown",
+        sdk: { name: "@stacklogger/core", version: "0.1.0" },
+        ...this.cfg.platform,
+      },
+      user: this.cfg.capture?.user ? this.user : undefined,
+      tags: this.cfg.capture?.tags ? { ...this.tags, ...o.tags } : undefined,
+      extra: this.cfg.capture?.extra
+        ? sanitize(o.extra ?? {}, this.cfg.limits)
+        : undefined,
+      contexts: this.cfg.capture?.contexts
+        ? { ...this.contexts, ...o.contexts }
+        : undefined,
+      breadcrumbs: this.cfg.capture?.breadcrumbs
+        ? this.crumbs.slice()
+        : undefined,
+      request: this.cfg.capture?.request ? o.request : undefined,
+    };
+    try {
+      e = sanitize(e, this.cfg.limits);
+      e = this.cfg.beforeSend?.(e) ?? e;
+      if (e) void this.transport.send([e]);
+    } catch {}
+    return e?.eventId;
+  }
+  log(l: StackLoggerLevel, m: string, o?: CaptureOptions) {
+    this.addBreadcrumb({ message: m, level: l });
+    return this.emit(l, m, o);
+  }
+  captureException(v: unknown, o: CaptureOptions = {}) {
+    const x = normalizeException(v, this.cfg.capture?.stack !== false);
+    return this.emit("error", x.message, o, x);
+  }
+  captureMessage(m: string, l: StackLoggerLevel = "info", o?: CaptureOptions) {
+    return this.emit(l, m, o);
+  }
+  addBreadcrumb(
+    b: Omit<StackLoggerBreadcrumb, "timestamp"> & { timestamp?: string },
+  ) {
+    this.crumbs.push({
+      ...b,
+      timestamp: b.timestamp ?? new Date().toISOString(),
+    });
+    const n = this.cfg?.limits?.maxBreadcrumbs ?? 50;
+    if (this.crumbs.length > n) this.crumbs.splice(0, this.crumbs.length - n);
+  }
+  flush() {
+    return this.transport?.flush() ?? Promise.resolve();
+  }
+  setUser(u: StackLoggerUser | null) {
+    this.user = u ?? undefined;
+  }
+  setTag(k: string, v: string | number | boolean) {
+    this.tags[k] = v;
+  }
+  setTags(v: Record<string, string | number | boolean>) {
+    Object.assign(this.tags, v);
+  }
+  removeTag(k: string) {
+    delete this.tags[k];
+  }
+  setContext(k: string, v: Record<string, unknown>) {
+    this.contexts[k] = v;
+  }
+  removeContext(k: string) {
+    delete this.contexts[k];
+  }
+  clearBreadcrumbs() {
+    this.crumbs = [];
+  }
+}
+export const StackLogger: Client = new ClientImpl() as unknown as Client;
+for (const l of levels)
+  Object.defineProperty(StackLogger, l, {
+    value: (m: string, o?: CaptureOptions) => StackLogger.log(l, m, o),
+  });
+export interface Client {
+  init(config: StackLoggerConfig): void;
+  log(
+    level: StackLoggerLevel,
+    message: string,
+    options?: CaptureOptions,
+  ): string | undefined;
+  captureException(
+    value: unknown,
+    options?: CaptureOptions,
+  ): string | undefined;
+  captureMessage(
+    message: string,
+    level?: StackLoggerLevel,
+    options?: CaptureOptions,
+  ): string | undefined;
+  addBreadcrumb(
+    breadcrumb: Omit<StackLoggerBreadcrumb, "timestamp"> & {
+      timestamp?: string;
+    },
+  ): void;
+  flush(): Promise<void>;
+  setUser(user: StackLoggerUser | null): void;
+  setTag(key: string, value: string | number | boolean): void;
+  setTags(values: Record<string, string | number | boolean>): void;
+  removeTag(key: string): void;
+  setContext(key: string, value: Record<string, unknown>): void;
+  removeContext(key: string): void;
+  clearBreadcrumbs(): void;
+  trace(message: string, options?: CaptureOptions): string | undefined;
+  debug(message: string, options?: CaptureOptions): string | undefined;
+  info(message: string, options?: CaptureOptions): string | undefined;
+  warn(message: string, options?: CaptureOptions): string | undefined;
+  error(message: string, options?: CaptureOptions): string | undefined;
+  fatal(message: string, options?: CaptureOptions): string | undefined;
+}
