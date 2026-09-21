@@ -267,7 +267,7 @@ class DefaultTransport implements StackLoggerTransport {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            "x-stacklogger-api-key": this.cfg.apiKey,
+            "x-stacklogger-key": this.cfg.apiKey,
           },
           body: JSON.stringify(batch),
           signal: ctrl.signal,

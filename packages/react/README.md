@@ -5,7 +5,7 @@ Capture and ingest errors from React applications with StackLogger.
 ## 1. Install the package
 
 ```bash
-pnpm add @stacklogger/react
+npm add @stacklogger/react
 ```
 
 `react` is a peer dependency, so your application must already have React 18 or 19 installed.
