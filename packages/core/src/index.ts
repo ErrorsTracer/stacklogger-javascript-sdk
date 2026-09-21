@@ -257,25 +257,27 @@ class DefaultTransport implements StackLoggerTransport {
   async flush() {
     if (!this.q.length) return;
     const batch = this.q.splice(0, this.cfg.batchSize ?? 10);
-    for (let i = 0; i <= (this.cfg.maxRetries ?? 2); i++) {
-      try {
-        const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), this.cfg.timeoutMs ?? 10000);
-        const r = await fetch(this.endpoint, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-stacklogger-key": this.cfg.apiKey,
-          },
-          body: JSON.stringify(batch),
-          signal: ctrl.signal,
-        });
-        clearTimeout(t);
-        if (r.ok || (r.status >= 400 && r.status < 500)) return;
-        if (i === (this.cfg.maxRetries ?? 2)) return;
-      } catch {
-        if (i === (this.cfg.maxRetries ?? 2)) return;
-        await new Promise((x) => setTimeout(x, 100 * Math.pow(2, i)));
+    for (const event of batch) {
+      for (let i = 0; i <= (this.cfg.maxRetries ?? 2); i++) {
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), this.cfg.timeoutMs ?? 10000);
+          const r = await fetch(this.endpoint, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-stacklogger-key": this.cfg.apiKey,
+            },
+            body: JSON.stringify(event),
+            signal: ctrl.signal,
+          });
+          clearTimeout(t);
+          if (r.ok || (r.status >= 400 && r.status < 500)) break;
+          if (i === (this.cfg.maxRetries ?? 2)) break;
+        } catch {
+          if (i === (this.cfg.maxRetries ?? 2)) break;
+          await new Promise((x) => setTimeout(x, 100 * Math.pow(2, i)));
+        }
       }
     }
   }
