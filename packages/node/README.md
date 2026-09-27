@@ -2,6 +2,13 @@
 
 Capture and ingest errors from Node.js applications with StackLogger.
 
+## Get started
+
+1. Create an account at [stacklogger.io](https://stacklogger.io).
+2. Create an application for your platform—Node.js, NestJS, or Next.js—and activate it.
+3. Open the application home page, go to the **Integration** section, and copy the app key.
+4. Use the app key when initializing this library to start logging and ingesting errors from your code.
+
 ## 1. Install the package
 
 ```bash
@@ -33,7 +40,7 @@ StackLogger.init({
 export { StackLogger };
 ```
 
-The default transport batches events and sends them to StackLogger. You can provide an `endpoint`, custom batching/retry settings, or an injectable transport through `StackLogger.init`.
+The default transport queues events and sends each event to StackLogger as a single object. You can provide an `endpoint`, custom batching/retry settings, or an injectable transport through `StackLogger.init`.
 
 ## 4. Capture errors manually
 

@@ -2,6 +2,13 @@
 
 Capture and ingest errors from React applications with StackLogger.
 
+## Get started
+
+1. Create an account at [stacklogger.io](https://stacklogger.io).
+2. Create a React application in StackLogger and activate it. You can also use an application created for Next.js.
+3. Open the application home page, go to the **Integration** section, and copy the app key.
+4. Use the app key when initializing this library to start logging and ingesting errors from your code.
+
 ## 1. Install the package
 
 ```bash
@@ -48,7 +55,7 @@ createRoot(document.getElementById("root")!).render(
 );
 ```
 
-The default transport batches events and sends them to StackLogger. To use a different endpoint or transport, pass the corresponding options to `StackLogger.init`.
+The default transport queues events and sends each event to StackLogger as a single object. To use a different endpoint or transport, pass the corresponding options to `StackLogger.init`.
 
 ## 3. Capture uncaught browser errors
 
