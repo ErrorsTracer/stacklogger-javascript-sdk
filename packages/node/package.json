@@ -1,6 +1,20 @@
 {
     "name": "@stacklogger/node",
     "version": "0.1.6",
+    "keywords": [
+        "stacklogger",
+        "node",
+        "nodejs",
+        "node.js",
+        "error tracking",
+        "error monitoring",
+        "exception tracking",
+        "application monitoring",
+        "logging",
+        "observability",
+        "nestjs",
+        "nextjs"
+    ],
     "type": "module",
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",

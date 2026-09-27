@@ -1,6 +1,17 @@
 {
     "name": "@stacklogger/core",
     "version": "0.1.4",
+    "keywords": [
+        "stacklogger",
+        "error tracking",
+        "error monitoring",
+        "application monitoring",
+        "error logging",
+        "exception tracking",
+        "javascript",
+        "typescript",
+        "observability"
+    ],
     "type": "module",
     "main": "./dist/index.js",
     "module": "./dist/index.js",

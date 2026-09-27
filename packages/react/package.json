@@ -1,6 +1,20 @@
 {
     "name": "@stacklogger/react",
     "version": "0.1.6",
+    "keywords": [
+        "stacklogger",
+        "react",
+        "reactjs",
+        "error tracking",
+        "error monitoring",
+        "exception tracking",
+        "application monitoring",
+        "frontend monitoring",
+        "javascript",
+        "typescript",
+        "observability",
+        "nextjs"
+    ],
     "type": "module",
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
